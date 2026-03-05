@@ -1,0 +1,17 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual Environment
+venv/
+.venv/
+env/
+
+# Large Model files (ถ้าไม่อยากเอาขึ้น Git)
+*.pth
+*.h5
+*.pkl
+
+# OS metadata
+.DS_Store
