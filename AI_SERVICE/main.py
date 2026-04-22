@@ -1,81 +1,124 @@
 import torch
-import torchvision.models as models
+import timm
+import torchvision.models as tv_models
 from fastapi import FastAPI, UploadFile, File
+from pydantic import BaseModel
 from PIL import Image
 import torchvision.transforms as transforms
 import io
 
 app = FastAPI()
 
-def load_my_model():
-    # 1. แก้เป็น 4 คลาสตามขนาดในไฟล์ .pth ของคุณ
-    num_classes = 4 
+NUM_CLASSES = 4
+LABELS = ["Healthy", "Mosaic Disease", "Bacterial Blight", "Brown Streak Disease"]
+DEFAULT_MODEL_PATH = "best_vit.pth"
+
+# Global state — mutable so /reload-model can swap without restart
+_model = None
+_active_model_path = DEFAULT_MODEL_PATH
+
+
+def _is_torchvision_vit(keys):
+    # torchvision ViT uses 'class_token' and 'conv_proj'; timm uses 'cls_token' and 'patch_embed'
+    return any('class_token' in k or 'conv_proj' in k for k in keys)
+
+
+def _load_model_from_path(path: str):
+    state_dict = torch.load(path, map_location='cpu')
+    if isinstance(state_dict, dict):
+        state_dict = state_dict.get('model', state_dict.get('state_dict', state_dict))
+
+    if _is_torchvision_vit(state_dict.keys()):
+        # torchvision vit_b_16 — replace classification head to match NUM_CLASSES
+        model = tv_models.vit_b_16(weights=None)
+        model.heads.head = torch.nn.Linear(model.heads.head.in_features, NUM_CLASSES)
+        print("🔍 Detected architecture: torchvision ViT-B/16")
+    else:
+        # timm vit_base_patch16_224
+        model = timm.create_model('vit_base_patch16_224', num_classes=NUM_CLASSES, pretrained=False)
+        print("🔍 Detected architecture: timm ViT-B/16")
+
+    model.load_state_dict(state_dict)
+    model.eval()
+    return model
+
+
+@app.on_event("startup")
+def startup_load():
+    global _model, _active_model_path
     try:
-        # สร้างโครงสร้าง ViT-B/16
-        model = models.vit_b_16(weights=None)
-        model.heads.head = torch.nn.Linear(model.heads.head.in_features, num_classes)
-
-        # 2. โหลด Weights
-        state_dict = torch.load('best_model_ViT16.pth', map_location='cpu')
-        
-        # แกะข้อมูลกรณีอยู่ใน Dict
-        if isinstance(state_dict, dict):
-            state_dict = state_dict.get('model', state_dict.get('state_dict', state_dict))
-
-        # 3. โหลดเข้าโมเดล (ตอนนี้ขนาดจะตรงกันเป๊ะแล้ว)
-        model.load_state_dict(state_dict)
-        model.eval()
-        
-        print("✅ AI Model Loaded: 4 Classes detected and matched!")
-        return model
+        _model = _load_model_from_path(DEFAULT_MODEL_PATH)
+        print(f"✅ AI Model Loaded: {DEFAULT_MODEL_PATH}")
     except Exception as e:
-        print(f"❌ Error during loading: {e}")
-        return None
+        print(f"❌ Error loading model: {e}")
+        _model = None
 
-model = load_my_model()
 
-# --- ส่วนทำนาย (Predict) ---
+# --- Predict ---
 @app.post("/predict")
 async def predict(file: UploadFile = File(...)):
-    if model is None: 
+    if _model is None:
         return {"success": False, "error": "Model not initialized"}
-        
+
     try:
         contents = await file.read()
         img = Image.open(io.BytesIO(contents)).convert('RGB')
-        
+
         transform = transforms.Compose([
             transforms.Resize((224, 224)),
             transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+            transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
         ])
         img_tensor = transform(img).unsqueeze(0)
-        
+
         with torch.no_grad():
-            output = model(img_tensor)
+            output = _model(img_tensor)
             prob = torch.nn.functional.softmax(output[0], dim=0)
             conf, pred = torch.max(prob, 0)
-            
-        # --- เพิ่ม Logic ตรวจสอบความมั่นใจ ---
+
         confidence_score = float(conf.item())
-        
-        # รายชื่อโรค 4 ตัวหลักที่โมเดลรู้จัก (ตาม Index 0-3)
-        labels = ["Healthy", "Cassava Mosaic Disease", "Cassava Bacterial Blight", "Cassava Brown Streak Disease"]
-        
+
         if confidence_score < 0.80:
-            # หากความมั่นใจต่ำกว่า 80% ให้ระบุว่าเป็น "another"
             result_disease = "another"
         else:
-            # หากมั่นใจเกิน 80% ให้ใช้ชื่อโรคตามที่โมเดลทำนายมา
-            result_disease = labels[pred.item()]
-            
+            result_disease = LABELS[pred.item()]
+
         return {
             "success": True,
             "disease": result_disease,
             "confidence": round(confidence_score * 100, 2),
-            "is_uncertain": confidence_score < 0.80 # แถม Flag บอกหน้าบ้านว่า AI ไม่ค่อยชัวร์
+            "is_uncertain": confidence_score < 0.80
         }
-        
+
     except Exception as e:
         return {"success": False, "error": str(e)}
-#uvicorn main:app --host 127.0.0.1 --port 8000 --reload
+
+
+# --- Reload model (called by backend after admin activates a new model) ---
+class ReloadRequest(BaseModel):
+    model_path: str  # relative path from AI_SERVICE dir, e.g. "models/new_model.pth"
+
+
+@app.post("/reload-model")
+async def reload_model(body: ReloadRequest):
+    global _model, _active_model_path
+    try:
+        new_model = _load_model_from_path(body.model_path)
+        _model = new_model
+        _active_model_path = body.model_path
+        print(f"✅ Model reloaded: {body.model_path}")
+        return {"success": True, "active_model": body.model_path}
+    except Exception as e:
+        print(f"❌ Reload failed: {e}")
+        return {"success": False, "error": str(e)}
+
+
+# --- Model info ---
+@app.get("/model-info")
+async def model_info():
+    return {
+        "active_model": _active_model_path,
+        "loaded": _model is not None
+    }
+
+# uvicorn main:app --host 127.0.0.1 --port 8000 --reload

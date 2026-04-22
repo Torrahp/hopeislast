@@ -1,0 +1,29 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ku-green: #006600;
+  --color-ku-green-dark: #004d00;
+  --color-ku-green-light: #e6f2e6;
+  --color-ku-gold: #c9a84c;
+  --font-family-sans: 'Kanit', sans-serif;
+}
+
+@layer base {
+  * { box-sizing: border-box; }
+
+  body {
+    font-family: 'Kanit', sans-serif;
+    background-color: #f3f7f3;
+    color: #1a1a1a;
+    margin: 0;
+    padding: 0;
+    min-height: 100vh;
+  }
+
+  #root {
+    width: 100%;
+    max-width: none;
+  }
+
+  button { font-family: 'Kanit', sans-serif; cursor: pointer; }
+}

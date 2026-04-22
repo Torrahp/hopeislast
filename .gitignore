@@ -1,6 +1,13 @@
-# ยกเว้นโฟลเดอร์ ngrok
+# ngrok binary
 ngrok-v3-stable-windows-amd64/
 
-# ยกเว้นไฟล์ Excel
+# Excel files
 For mini app.xlsx
+
+# Claude Code session data
+.claude/
+
+# OS metadata
+.DS_Store
+Thumbs.db
 

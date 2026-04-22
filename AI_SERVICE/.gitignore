@@ -8,10 +8,21 @@ venv/
 .venv/
 env/
 
-# Large Model files (ถ้าไม่อยากเอาขึ้น Git)
+# Model weights (ไฟล์ใหญ่มาก ~328MB ต่อไฟล์)
+models/
 *.pth
 *.h5
 *.pkl
 
+# Test/experiment files
+testmodel/
+testvit.py
+testvit16.py
+train_template.py
+
+# Confusion matrix images
+confusion_matrix_*.png
+
 # OS metadata
 .DS_Store
+Thumbs.db
