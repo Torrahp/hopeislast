@@ -6,6 +6,10 @@ For mini app.xlsx
 
 # Claude Code session data
 .claude/
+CLAUDE.md
+
+# Database schema (local only)
+backdatabase.sql
 
 # OS metadata
 .DS_Store
